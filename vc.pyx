@@ -6,7 +6,6 @@ import networkx as nx
 from scipy.linalg import toeplitz
 import networkx as nx
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 import pickle
 import timeit
@@ -41,7 +40,7 @@ cdef np.ndarray init_J(int states):
     assert states > 1, 'number of states needs to be more than 1'
     cdef np.ndarray J 
     
-    cdef int option = 2
+    cdef int option = 1
     
     if option == 1:
         J = np.identity((states))
@@ -256,7 +255,7 @@ def simulate(T, states):
     J = init_J(states) 
     sh = full_hamiltonian(G,A,J)        
     beta = 1 / T
-    timesteps = 1000
+    timesteps = 100
     M, system_hamiltonian, fm = metropolis(G, A, J, states, beta, timesteps, sh)
     return G_init, J, system_hamiltonian, A, fm
 
