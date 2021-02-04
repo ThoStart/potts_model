@@ -29,28 +29,26 @@ cdef np.ndarray neighbors(A, node):
     cdef np.ndarray nb = np.where(A[node]==1)[1]
     return nb
 
-cdef np.ndarray init_J(int states):
+cdef np.ndarray init_V(int states, int option):
     '''
     Interaction matrix initialization
     Options:
-    - 1: Standard Q-Potts model J matrix
+    - 1: Standard Q-Potts model V matrix
     - 2: Non-directional Value Chain encoding
-    - 3: Directional Value Chain encoding 
+    - 3: Path 5 states
     '''
     assert states > 1, 'number of states needs to be more than 1'
-    cdef np.ndarray J 
-    
-    cdef int option = 1
-    
+    cdef np.ndarray V
+
     if option == 1:
-        J = np.identity((states))
+        V = np.identity((states))
         if states == 2:
-            J = np.array([[0, 1],\
+            V = np.array([[0, 1],\
                           [1, 0]])
         
     if option == 2:
         if states == 2: # A <-> A , B <-> B
-            J = np.array([[0, 1],\
+            V = np.array([[0, 1],\
                           [1, 0]])
         else:
             first_row = np.zeros(states)
@@ -58,18 +56,17 @@ cdef np.ndarray init_J(int states):
             first_col = np.zeros(states)
             first_col[1] = 1
 
-            J = toeplitz(first_col, first_row)
+            V = toeplitz(first_col, first_row)
 
     if option == 3:
-        first_row = np.zeros(states)
-        first_row[1] = 1
-        first_col = np.zeros(states)
-        first_col[1] = 0
+        V = np.array([[0, 1, 1, 1, 1],
+                      [1, 0, 0, 0, 0],
+                      [1, 0, 0, 0, 0],
+                      [1, 0, 0, 0, 0],
+                      [1, 0, 0, 0, 0]])
+    return V
 
-        J = toeplitz(first_col, first_row)
-    return J
-
-cdef float hamiltonian(G, int node, np.ndarray nb, np.ndarray J):
+cdef float hamiltonian(G, int node, np.ndarray nb, np.ndarray V):
     '''
     Hamiltonian function: Calculate the energy for each bond of a single node
     , return the sum of these energies
@@ -92,11 +89,11 @@ cdef float hamiltonian(G, int node, np.ndarray nb, np.ndarray J):
         # check if states are the same
 #         if cur_node == cur_nb:
 #             kronecker = 1
-#         H += -1 * (1 - kronecker) #J[cur_node, cur_nb]) # * V[]
-        H -= J[cur_node, cur_nb]
+#         H += -1 * (1 - kronecker) #V[cur_node, cur_nb]) # * V[]
+        H -= V[cur_node, cur_nb]
     return H
     
-cdef metropolis(G, A, J, int states, float beta, int time, float system_hamiltonian):
+cdef metropolis(G, A, V, int states, float beta, int time, float system_hamiltonian):
     '''
     Performs all metropolis algorithm steps.
     
@@ -128,12 +125,12 @@ cdef metropolis(G, A, J, int states, float beta, int time, float system_hamilton
             
             # calculate hamiltonian for current configuration
             nb = neighbors(A, rand_node)
-            H1 = hamiltonian(G, rand_node, nb, J)
+            H1 = hamiltonian(G, rand_node, nb, V)
                         
             # calculate hamiltonian for new configuration
             G_copy = G.copy()
             G_copy[rand_node] = rand_state
-            H2 = hamiltonian(G_copy, rand_node, nb, J)
+            H2 = hamiltonian(G_copy, rand_node, nb, V)
             
             # calculate energy difference
             dE = (H2 - H1)
@@ -162,26 +159,26 @@ cdef metropolis(G, A, J, int states, float beta, int time, float system_hamilton
     return G, sh, history_arr
 
 ### Analysis functions
-cdef float full_hamiltonian(G, A, J):
+cdef float full_hamiltonian(G, A, V):
     '''
     Returns the energy state of the system.
     '''
     cdef float system_hamiltonian = 0 
     for i in range(len(G)):
         nb = neighbors(A, i)
-        system_hamiltonian += hamiltonian(G, G[i], nb, J)
+        system_hamiltonian += hamiltonian(G, G[i], nb, V)
     return 0.5 * system_hamiltonian
 
 ### Satisfaction functions
-cdef float full_satisfaction(G,A,J):
+cdef float full_satisfaction(G, A, V):
     'returns average satisfaction of the nodes'
     cdef float system_satisfaction = 0
     for i in range(len(G)):
         nb = neighbors(A, i)
-        system_satisfaction += local_satisfaction(G, G[i], nb, J)
+        system_satisfaction += local_satisfaction(G, G[i], nb, V)
     return system_satisfaction * 0.5
 
-cdef float local_satisfaction(G, int node, np.ndarray nb, np.ndarray J):
+cdef float local_satisfaction(G, int node, np.ndarray nb, np.ndarray V):
     cdef int cur_node = G[node]
     cdef int cur_nb
     cdef int s = 0
@@ -189,7 +186,7 @@ cdef float local_satisfaction(G, int node, np.ndarray nb, np.ndarray J):
     # loop through all neighbors
     for i in range(len(nb)):
         cur_nb = G[nb[i]]
-        if J[cur_node, cur_nb] == 0:
+        if V[cur_node, cur_nb] == 0:
             s -=0
         else: 
             s += 1  
@@ -197,13 +194,13 @@ cdef float local_satisfaction(G, int node, np.ndarray nb, np.ndarray J):
 
 ### Find value chain functions
 
-cdef chains(G, A, J):
+cdef path_chains(G, A, V):
     '''
     This functions returns the number of full value chains present in the network.
     '''
     cdef np.ndarray nb
     # determine VC length
-    cdef int VC_length = J.shape[0]
+    cdef int VC_length = V.shape[0]
     cdef np.ndarray chains_of_length = np.zeros((VC_length))
     cdef np.ndarray nodes_in_state = np.zeros((VC_length))
     
@@ -220,15 +217,42 @@ cdef chains(G, A, J):
 #             print("node", node)
             nb = neighbors(A, node)
             for i in range(len(nb)):
-            # TODO change to J matrix
+            # TODO change to V matrix
                 if G[nb[i]] == (state + 1):
-#                     print(nb[i])
+#                   print(nb[i])
                     c.append(nb[i])
-                    chains_of_length[state+1] = len(c)
+                    chains_of_length[state + 1] = len(c)
         nodes_in_chain.append(c)
     return chains_of_length
 
-cdef local_chain_satisfactions(G, A, J):
+cdef plus_chains(G, A, V):
+    cdef np.ndarray nb
+    # determine VC length
+    cdef int VC_length = V.shape[0]
+    cdef np.ndarray nodes_in_state = np.zeros((VC_length))
+
+    # find starting points of VC e.g. where state == 0
+    cdef start_nodes = np.where(G==0)[0]
+    cdef list nodes_in_chain = []
+    nodes_in_chain.append(start_nodes)
+    cdef int counter = 0
+    cdef int node_counter = 0
+
+    for node in nodes_in_chain[state]:
+        node_counter = 0
+        nb = neighbors(A, node)
+        for state in range(VC_length):
+            for i in range(len(nb)):
+                if G[nb[i]] == state and G[nb[i]] != 0:
+                    nodes_in_chain.append(nb[i])
+                    node_counter+=1
+                    break
+        if node_counter == VC_length-1:
+            counter += 1
+
+    return counter
+
+cdef local_chain_satisfactions(G, A, V):
     cdef np.ndarray nb
     cdef satisfaction = 0
     cdef G_satisfaction = []
@@ -239,7 +263,7 @@ cdef local_chain_satisfactions(G, A, J):
         satisfaction = 0
         nb = neighbors(A, node_i)
         for i in range(len(nb)):
-            if J[int(state_node), int(G[nb[i]])] == 1:
+            if V[int(state_node), int(G[nb[i]])] == 1:
                 satisfaction += 1
             else:
                 satisfaction -= 1
@@ -248,47 +272,44 @@ cdef local_chain_satisfactions(G, A, J):
     return G_satisfaction
 
 ### Simulation functions
-def simulate(T, states):
-    lattice_size = 10
-    G, A = initialize_lattice(lattice_size, states)
-    G_init = G.copy()
-    J = init_J(states) 
-    sh = full_hamiltonian(G,A,J)        
-    beta = 1 / T
-    timesteps = 100
-    M, system_hamiltonian, fm = metropolis(G, A, J, states, beta, timesteps, sh)
-    return G_init, J, system_hamiltonian, A, fm
+def init_V_py(states, option):
+    V = init_V(states, option)
+    return V
 
-def check(G, A, J):
-    c = chains(G, A, J)
+def check(G, A, V):
+    c = path_chains(G, A, V)
     return c
 
-def check_local(G, A, J):
-    G_satisfaction = local_chain_satisfactions(G, A, J)
-#     print(np.array(G_satisfaction).reshape(10,10))
+def plus_check(G, A, V):
+    c = plus_chains(G, A, V)
+    return c
+
+def check_local(G, A, V):
+    G_satisfaction = local_chain_satisfactions(G, A, V)
+    # print(np.array(G_satisfaction).reshape(10,10))
     return np.mean(G_satisfaction)
 
-def sep_ham(fm, A, J):
+def sep_ham(fm, A, V):
     l = []
     for step in range(len(fm)+1):
-        l.append(full_hamiltonian(fm[step], A, J))
+        l.append(full_hamiltonian(fm[step], A, V))
     return l
     
-def sep_sat(fm, A, J):
+def sep_sat(fm, A, V):
     l= []
     for step in range(len(fm)):
-        l.append(full_satisfaction(fm[step], A, J))
+        l.append(full_satisfaction(fm[step], A, V))
     return l
 
-def put_in_dataframe(fm, system_hamiltonian, A, J):
+def put_in_dataframe(fm, system_hamiltonian, A, V):
     '''
     Save data in convenient manner using pandas dataframe for each run, which is stored in a dictionary.
     '''
     df = pd.DataFrame(data=fm)
     # put energy value of timestep in last column
-#     df.loc[:, fm[0].shape[0]+1] = check(fm, A, J) # complete Value Chains
+#     df.loc[:, fm[0].shape[0]+1] = check(fm, A, V) # complete Value Chains
     df.loc[:, fm[0].shape[0]+2] = system_hamiltonian # phase of system
-    df.loc[:, fm[0].shape[0]+3] = check_local(fm[-1], A, J) # local satisfaction
+    df.loc[:, fm[0].shape[0]+3] = check_local(fm[-1], A, V) # local satisfaction
     return df
 
 def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, length = 100, fill = '█', printEnd = "\r"):
@@ -307,29 +328,39 @@ def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, 
     percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
     filledLength = int(length * iteration // total)
     bar = fill * filledLength + '-' * (length - filledLength)
-    print(f'\r{prefix} |{bar}| {percent}% {suffix}')
+    print(f'\r{prefix} {bar} {percent}% {suffix}, {printEnd}')
     # Print New Line on Complete
     if iteration == total: 
         print()
 
-def perform_tests(temperatures, states, samples):
+def simulate(T, states, V, timesteps):
+    lattice_size = 10
+    G, A = initialize_lattice(lattice_size, states)
+    G_init = G.copy()
+    sh = full_hamiltonian(G,A,V)
+    beta = 1 / T
+    M, system_hamiltonian, fm = metropolis(G, A, V, states, beta, timesteps, sh)
+    return G_init, V, system_hamiltonian, A, fm
+
+def perform_tests(temperatures, states, samples, V, timesteps):
     '''
     Perform multiple simulations with different temperatures and states.
     Saves the system-hamiltonian per step of multiple runs.
     '''
     l = len(temperatures) * len(states) * len(samples)
     i = 0
-    printProgressBar(0, l, prefix = 'Progress:', suffix = 'Complete', length = 100)
-    
+    # printProgressBar(0, l, prefix = 'Progress:', suffix = 'Complete', length = 100)
+
     runs = {}
     for state in states:
         for temp in temperatures:
+            print(temp)
             for run in samples:
-                G_init, J, system_hamiltonian, A, fm = simulate(temp, state)
-                df = put_in_dataframe(fm, system_hamiltonian, A, J)
+                G_init, V, system_hamiltonian, A, fm = simulate(temp, state, V, timesteps)
+                df = put_in_dataframe(fm, system_hamiltonian, A, V)
                 runs[f'run{state,temp,run}'] = df
-                    
-                printProgressBar(i + 1, l, prefix = 'Progress:', suffix = 'Complete', length = 100)
+
+                # printProgressBar(i + 1, l, prefix = 'Progress:', suffix = 'Complete', length = 100)
                 i += 1
     return runs
 
